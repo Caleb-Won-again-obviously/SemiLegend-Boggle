@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Boggle Chaos — Full Version</title>
+<style>
+html, body {
+  height: 100%;
+  margin: 0;
+  background: #000;
+  color: #fff;
+  font-family: Arial;
+  display: grid;
+  grid-template-columns: 1fr 25vmin;
+  grid-template-rows: auto 1fr auto auto;
+  gap: 10px;
+  overflow: hidden;
+}
+#board {
+  grid-column: 1;
+  grid-row: 2 / span 2;
+  display: grid;
+  gap: 6px;
+  margin: auto;
+  width: 70vmin;   /* Always square */
+  height: 70vmin;  /* Always square */
+}
+.cell {
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  font-weight: 800;
+  font-size: calc(70vmin / var(--board-size) * 0.6); /* dynamic font size */
+  user-select: none;
+  cursor: pointer;
+}
+#controls {
+  grid-column: 1;
+  grid-row: 4;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 70vmin;
+  margin: auto;
+}
+#scoreContainer {
+  display: flex;
+  gap: 2rem;
+  font-size: 2.8vmin;
+}
+#wordInput {
+  width: 50%;
+  font-size: 2.4vmin;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: none;
+  outline: none;
+}
+#wordList {
+  grid-column: 2;
+  grid-row: 2 / span 3;
+  border: 1px solid #444;
+  border-radius: 10px;
+  background: #111;
+  padding: 8px;
+  overflow-y: auto;
+  font-size: 2vmin;
+}
+#overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.95);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 5vmin;
+  z-index: 999;
+  text-align: center;
+  padding: 2rem;
+}
+#endText {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 8vmin;
+  font-weight: 900;
+  color: red;
+  text-align: center;
+  display: none;
+  z-index: 1000;
+  pointer-events: none;
+  line-height: 1.1;
+}
+label,input,button,select { font-size: 2vmin; margin: 0.3rem; }
+button { padding: 0.5rem 1rem; border-radius: 8px; border:none; cursor:pointer; background:#0f0; color:#000; font-weight:bold;}
+</style>
+</head>
+<body>
+
+<div id="overlay">
+  <div>
+    <p>Customize your Boggle board!</p>
+    <label>Cell Background:
+      <input type="color" id="cellBg" value="#222"/>
+    </label><br/>
+    <label>Cell Text:
+      <input type="color" id="cellText" value="#fff"/>
+    </label><br/>
+    <label>Board Size:
+      <select id="boardSizeSelect">
+        <option value="3">3×3</option>
+        <option value="4" selected>4×4</option>
+        <option value="5">5×5</option>
+        <option value="6">6×6</option>
+        <option value="7">7×7</option>
+      </select>
+    </label><br/>
+    <label>Game Mode:
+      <select id="gameMode">
+        <option value="classic">Classic</option>
+        <option value="reverse">Reverse</option>
+        <option value="multiplier">Multiplier Madness</option>
+        <option value="speed">Speed Challenge (3s shuffle)</option>
+        <option value="category">Category Mode</option>
+        <option value="length">Length Mode</option>
+        <option value="bogglemask">Boggle?</option>
+        <option value="alphabet">Alphabet Soup</option>
+        <option value="letterbomb">Letter Bomb</option>
+        <option value="timewarp">Time Warp</option>
+        <option value="doublepoints">Double Points</option>
+      </select>
+    </label><br/><br/>
+    <button id="startBtn">Start Game</button>
+  </div>
+</div>
+
+<div id="timer">03:00</div>
+<div id="debug">Loading dictionary...</div>
+<div id="board"></div>
+
+<div id="controls">
+  <input id="wordInput" type="text" placeholder="Type a word and press Enter" autocomplete="off" autocapitalize="none" spellcheck="false"/>
+  <div id="scoreContainer">
+    <div id="score">Score: 0</div>
+    <div id="highScore">High Score: 0</div>
+  </div>
+</div>
+
+<div id="wordList"></div>
+<div id="endText"></div>
+
+<script src="dictionary.js"></script>
+<script>
+let dictionarySet = new Set(Object.keys(dictionary).map(w=>w.toLowerCase()));
+document.getElementById('debug').textContent = `Dictionary loaded! Words: ${dictionarySet.size}`;
+
+let dice = [
+  ['A','A','E','E','G','N'], ['E','L','R','T','T','Y'], ['A','O','O','T','T','W'], ['A','B','B','J','O','O'],
+  ['E','H','R','T','V','W'], ['C','I','M','O','T','U'], ['D','I','S','T','T','Y'], ['E','I','O','S','S','T'],
+  ['D','E','L','R','V','Y'], ['A','C','H','O','P','S'], ['H','I','M','N','Qu','U'], ['E','E','I','N','S','U'],
+  ['E','E','G','H','N','W'], ['A','F','F','K','P','S'], ['H','L','N','N','R','Z'], ['D','E','I','L','R','X']
+];
+
+let boardSize = 4;
+let timerSeconds = 180;
+let timerInterval = null;
+let spinInterval = null;
+let letterBombInterval = null;
+let timeWarpInterval = null;
+let doublePointsInterval = null;
+let totalScore = 0;
+let highScore = localStorage.getItem('boggleHighScore') ? parseInt(localStorage.getItem('boggleHighScore')) : 0;
+let foundWords = new Set();
+let cellBgColor = '#222';
+let cellTextColor = '#fff';
+let currentBoard = [];
+let tapWord = "";
+let autoSubmitTimeout = null;
+let currentPath = [];
+let currentMode = "classic";
+let doublePointsActive = false;
+
+// ----------------------- HELPERS -----------------------
+function shuffle(arr){ const a=arr.slice(); for(let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } return a; }
+function pad(n){ return String(n).padStart(2,'0'); }
+function getRandomLetter(){ return String.fromCharCode(65+Math.floor(Math.random()*26)); }
+function resetAutoSubmit(){ if(autoSubmitTimeout) clearTimeout(autoSubmitTimeout); autoSubmitTimeout = setTimeout(autoSubmitWord, 750); }
+
+// ----------------------- BOARD -----------------------
+function createBoard(){
+  const boardDiv = document.getElementById('board');
+  boardDiv.innerHTML='';
+  boardDiv.style.setProperty('--board-size', boardSize);
+  boardDiv.style.gridTemplateColumns=`repeat(${boardSize},1fr)`;
+  boardDiv.style.gridTemplateRows=`repeat(${boardSize},1fr)`;
+  currentBoard = [];
+  let dicePool = shuffle(dice.concat(Array(Math.max(0, boardSize*boardSize-16)).fill(['A','B','C','D','E','F'])));
+  for(let i=0;i<boardSize;i++){
+    let row=[];
+    for(let j=0;j<boardSize;j++){
+      const index = i*boardSize + j;
+      const letters = dicePool[index%16];
+      const chosen = letters[Math.floor(Math.random()*letters.length)];
+      const cell = document.createElement('div');
+      cell.className='cell';
+      cell.textContent = chosen;
+      cell.style.background = cellBgColor;
+      cell.style.color = cellTextColor;
+
+      cell.addEventListener('click', ()=>{
+        if(currentPath.length>0){
+          const last = currentPath[currentPath.length-1];
+          const dr = Math.abs(i-last[0]);
+          const dc = Math.abs(j-last[1]);
+          if(dr>1 || dc>1) return;
+        }
+        for(const p of currentPath){ if(p[0]===i && p[1]===j) return; }
+        currentPath.push([i,j]);
+        tapWord += chosen.toLowerCase();
+        if(currentMode==='hardcore'){
+          const newLetter = getRandomLetter();
+          currentBoard[i][j] = newLetter.toLowerCase();
+          cell.textContent=newLetter;
+        }
+        resetAutoSubmit();
+      });
+
+      boardDiv.appendChild(cell);
+      row.push(chosen.toLowerCase());
+    }
+    currentBoard.push(row);
+  }
+}
+
+// ----------------------- AUTO SUBMIT -----------------------
+function autoSubmitWord(){
+  const word = tapWord.trim().toLowerCase();
+  if(!word){ tapWord=''; currentPath=[]; return; }
+  let valid=dictionarySet.has(word) && isWordOnBoard(word);
+  if(currentMode==='reverse'){ valid = dictionarySet.has(word.split('').reverse().join('')) && isWordOnBoard(word);}
+  if(valid && !foundWords.has(word)){
+    if(currentMode==='hardcore' && word.length<4){ valid=false; timerSeconds=Math.max(timerSeconds-15,0);}
+  }
+  if(valid){
+    foundWords.add(word);
+    let points=Math.max(word.length-2,0);
+    if(currentMode==='multiplier') points*=2;
+    if(doublePointsActive) points*=2;
+    updateScore(points);
+    const li = document.createElement('div'); li.textContent=word; document.getElementById('wordList').appendChild(li);
+  } else if(currentMode==='hardcore'){ timerSeconds=Math.max(timerSeconds-15,0);}
+  tapWord=''; currentPath=[];
+}
+
+// ----------------------- WORD CHECK -----------------------
+function isWordOnBoard(word){
+  const visited=Array(boardSize).fill(null).map(()=>Array(boardSize).fill(false));
+  function dfs(r,c,index){
+    if(index===word.length) return true;
+    if(r<0||r>=boardSize||c<0||c>=boardSize) return false;
+    if(visited[r][c]||currentBoard[r][c]!==word[index]) return false;
+    visited[r][c]=true;
+    for(let dr=-1;dr<=1;dr++){for(let dc=-1;dc<=1;dc++){if(dr!==0||dc!==0){if(dfs(r+dr,c+dc,index+1)) return true;}}}
+    visited[r][c]=false; return false;
+  }
+  for(let r=0;r<boardSize;r++){for(let c=0;c<boardSize;c++){if(dfs(r,c,0)) return true;}}
+  return false;
+}
+
+// ----------------------- SCORE -----------------------
+function updateScore(points){
+  totalScore += points;
+  document.getElementById('score').textContent = `Score: ${totalScore}`;
+  if(totalScore>highScore){ highScore=totalScore; localStorage.setItem('boggleHighScore',highScore); document.getElementById('highScore').textContent=`High Score: ${highScore} 🎉`;}
+}
+
+// ----------------------- TIMER -----------------------
+function startTimer(){
+  clearInterval(timerInterval); timerSeconds=180;
+  document.getElementById('timer').textContent='03:00';
+  timerInterval=setInterval(()=>{
+    timerSeconds--;
+    const m=Math.floor(timerSeconds/60), s=timerSeconds%60;
+    document.getElementById('timer').textContent=`${pad(m)}:${pad(s)}`;
+    if(timerSeconds<=0){ clearInterval(timerInterval); gameOver(); }
+  },1000);
+}
+
+// ----------------------- GAME OVER -----------------------
+function gameOver(){
+  clearInterval(timerInterval); stopAllIntervals();
+  const t=document.getElementById('endText');
+  t.textContent='GAME OVER!';
+  t.style.display='block';
+}
+
+// ----------------------- SPECIAL MODES -----------------------
+function stopAllIntervals(){ clearInterval(spinInterval); clearInterval(letterBombInterval); clearInterval(timeWarpInterval); clearInterval(doublePointsInterval); spinInterval=null; letterBombInterval=null; timeWarpInterval=null; doublePointsInterval=null; doublePointsActive=false;}
+
+function startSpecialModes(){
+  stopAllIntervals();
+  if(currentMode==='speed'){ spinInterval=setInterval(()=>{ createBoard(); },3000);}
+  if(currentMode==='alphabet'){ spinInterval=setInterval(()=>{ createBoard(); },15000);}
+  if(currentMode==='letterbomb'){ letterBombInterval=setInterval(()=>{
+    const r=Math.floor(Math.random()*boardSize),c=Math.floor(Math.random()*boardSize);
+    const letter=getRandomLetter(); currentBoard[r][c]=letter.toLowerCase();
+    document.getElementById('board').children[r*boardSize+c].textContent=letter;
+  },5000);}
+  if(currentMode==='timewarp'){ timeWarpInterval=setInterval(()=>{ timerSeconds=Math.max(timerSeconds+Math.floor(Math.random()*11)-5,0); },7000);}
+  if(currentMode==='doublepoints'){ doublePointsInterval=setInterval(()=>{ doublePointsActive=true; setTimeout(()=>{doublePointsActive=false;},5000);},10000);}
+}
+
+// ----------------------- TYPING INPUT -----------------------
+const wordInput=document.getElementById('wordInput');
+wordInput.addEventListener('keydown', e => {
+  if (e.key === 'Enter') {
+    const typed = wordInput.value.trim().toLowerCase();
+    if (typed) {
+      let valid = dictionarySet.has(typed) && isWordOnBoard(typed);
+      if (currentMode === 'reverse') {
+        valid = dictionarySet.has(typed.split('').reverse().join('')) && isWordOnBoard(typed);
+      }
+      if (valid && !foundWords.has(typed)) {
+        foundWords.add(typed);
+        let points = Math.max(typed.length - 2, 0);
+        if (currentMode === 'multiplier') points *= 2;
+        if (doublePointsActive) points *= 2;
+        updateScore(points);
+        const li = document.createElement('div');
+        li.textContent = typed;
+        document.getElementById('wordList').appendChild(li);
+      } else if (currentMode === 'hardcore') {
+        timerSeconds = Math.max(timerSeconds - 15, 0);
+      }
+    }
+    wordInput.value = '';
+  }
+});
+
+// ----------------------- START GAME -----------------------
+document.getElementById('startBtn').addEventListener('click',()=>{
+  cellBgColor=document.getElementById('cellBg').value;
+  cellTextColor=document.getElementById('cellText').value;
+  currentMode=document.getElementById('gameMode').value;
+  boardSize=parseInt(document.getElementById('boardSizeSelect').value);
+
+  // ⚠️ Restored warning for Boggle? mode
+  if (currentMode === "bogglemask") {
+    alert("Warning: Boggle? mode may cause flashing visuals!");
+  }
+
+  document.getElementById('overlay').style.display='none';
+  totalScore=0; foundWords.clear(); document.getElementById('wordList').innerHTML=''; document.getElementById('score').textContent=`Score: 0`;
+  tapWord=''; currentPath=[]; createBoard(); startTimer(); startSpecialModes();
+});
+
+// ----------------------- RESET ON SPACE -----------------------
+document.addEventListener('keydown',e=>{
+  if(e.code==='Space'){
+    document.getElementById('endText').style.display='none';
+    document.getElementById('endText').innerHTML=''; 
+    totalScore=0; foundWords.clear(); document.getElementById('wordList').innerHTML=''; document.getElementById('score').textContent=`Score: 0`;
+    tapWord=''; currentPath=[]; createBoard(); startTimer(); startSpecialModes();
+  }
+});
+</script>
+</body>
+</html>
